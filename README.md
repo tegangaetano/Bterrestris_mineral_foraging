@@ -1,4 +1,12 @@
 # Bterrestris_mineral_foraging
-Foraging preference for essential mineral salts in the buff-tailed bumblebee (Bombus terrestris audax)
 
-This repository contains R code used for the analysis of novel data on the foraging tolerance and preference of buff-tailed bumblebees (Bombus terrestris audax) for multiple concentrations of the minerals salts calcium, potassium, magnesium, and sodium.
+Context and Citation:
+This repository contains R code used for the analysis of novel data on the foraging tolerance and preference of buff-tailed bumblebees (Bombus terrestris audax) for multiple concentrations of the minerals salts calcium, potassium, magnesium, and sodium using linear mixed models (LMM).
+
+This research was funded by a UKRI-NERC studentship to QUADRAT (NE/S007377/1).
+
+License
+This work is distributed under the GPLv3 license. Reuse of code derived from this repository is permitted under two conditions:
+
+Proper attribution (i.e., citation of the associated publication; see CITATION.cff and above).
+Publication of reused scripts on an open-access platform, such as Github.
