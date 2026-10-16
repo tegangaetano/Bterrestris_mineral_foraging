@@ -10,8 +10,9 @@ library(tidyverse) #load core tidyverse packages
 library(dplyr) #data manipulation and organisation
 
 #Visualization
-library(ggplot2) #data visualization
+library(ggplot2) #data visualization 
 library(cowplot) #extension of ggplot2 to combine multiple plots
+library(ggstats) #extension of ggplot2 to plot stats
 library(ggpubr)
 
 #Analysis
@@ -64,6 +65,9 @@ Behav_data$new_PI <- ((Behav_data$corrected_av_per_bee_mL -                     
                         Behav_data$av_total_consumed_mL)
 
 Behav_data$new_PI <- as.numeric(Behav_data$new_PI)
+
+dim(Behav_data)
+# 384  15
 
 #Filter data####
 #Filter analyte data
@@ -134,6 +138,8 @@ dotchart(Behav_data$new_PI, groups = Behav_data$concentration,
 dotchart(no_outliers$new_PI, groups = no_outliers$concentration,
          main = 'PI by concentration')
 
+par(mfrow = c(1,1))
+
 #Transform the y 
 qqnorm(Behav_data$corrected_av_per_bee_mL, pch = 1, frame = FALSE)
 qqline(Behav_data$corrected_av_per_bee_mL, col = 'firebrick', lwd = 2)
@@ -148,64 +154,9 @@ qqline(sqrt(Behav_data$corrected_av_per_bee_mL), col = 'firebrick', lwd = 2)
 hist(sqrt(Behav_data$corrected_av_per_bee_mL), freq=FALSE)
 lines(density(sqrt(Behav_data$corrected_av_per_bee_mL)))
 
-#Analysis####
-#Using LMM with humidity and temperature as continuous explanatory variables, analyte as a fixed categorical variable and date, arena, and colony as random effects.
-clim_model <- glmmTMB(corrected_av_per_bee_mL ~ 
-                      scale(temp_C) * scale(humidity_percent) +
-                        analyte * concentration +
-                        (1 | date) +
-                      (1 | colony),
-                      family = beta_family,
-                        data = Behav_data)
-
-Anova(clim_short)
-
-#Check model assumptions
-check_model(clim_model) #OK
-
-#Dharma tests
-sim_Output <- simulateResiduals(clim_model, n = 250)
-
-plot(sim_Output) #OK
-testResiduals(sim_Output) 
-
-#interaction plot with temperature on the x axis
-flip_plot <- interact_plot(clim_model, pred = humidity_percent, modx = temp_C, 
-                               interval = TRUE, int.width = 0.6,
-                               plot.points = FALSE,
-                               data = Behav_data,
-                               x.label = 'Humidity (%)',
-                               y.label = 'Average Consumption per Bee (mL)',
-                               legend.main = 'Temperature (C)',
-                               main = '') +
-  theme_classic() + theme(axis.text = element_text(size = 10),
-                      axis.title = element_text(size = 14))
-
-flip_plot
-
-ggsave("interaction_plot.png", plot = flip_plot, width = 6, height = 4, units = "in", dpi = 300)
-
-#interaction plot with humidity on the x axis
-interact_clim <- interact_plot(clim_model, pred = humidity_percent, modx = temp_C, 
-              interval = TRUE, int.width = 0.6,
-              plot.points = TRUE,
-              data = Behav_data,
-              x.label = 'Humidity (%)',
-              y.label = 'Average Consumption per Bee (mL)',
-              legend.main = 'Temperature (C)',
-              main = '') +
-  theme_classic()  + theme(axis.text = element_text(size = 10),
-                   axis.title = element_text(size = 14))
-
-interact_clim
-
-ggsave("interaction_plot_raw.png", plot = interact_clim, width = 6, height = 4, units = "in", dpi = 300)
-
 #Analysis by analyte####
 #Potential random effects to include: date (17 levels), colony (10 levels), observer (3 levels), arena (2 levels)
 #Sodium (Na) ####
-#Plot PI (mL) by concentration (dashed line = 0)
-
 #Run model on Na data####
 Na_PI_model <- glmmTMB(new_PI ~ fPPM + 
                          (1 | date) +
@@ -219,12 +170,14 @@ Na_PI_poly_red <- glmmTMB(new_PI ~ poly(PPM, 2) +
                             (1 | colony),
                           family = gaussian, 
                           data = Na_data)
+#Two terms fits the curve!
 
 Na_PI_poly_red2 <- glmmTMB(new_PI ~ poly(PPM, 1) +
                             (1 | date) +
                             (1 | colony),
                           family = gaussian, 
                           data = Na_data)
+#One term is not better than two terms
 
 AIC(Na_PI_poly_red, Na_PI_poly_red2)
 #df       AIC
@@ -244,27 +197,115 @@ testResiduals(sim_Output)
 
 #Na_PI_model ####
 summary(Na_PI_model)
+#Family: gaussian  ( identity )
+#Formula:          
+#new_PI ~ fPPM + (1 | date) + (1 | colony)
+#Data: Na_data
+
+#AIC      BIC       logLik  deviance    df.resid 
+#-177.9   -154.8     98.0   -195.9       87 
+  
+#Conditional model:
+#Groups   Name        Variance  Std.Dev. 
+#date     (Intercept) 2.120e-12 1.456e-06
+#colony   (Intercept) 3.069e-14 1.752e-07
+#Residual              7.608e-03 8.722e-02
+#Number of obs: 96, groups:  date, 13; colony, 10
+
+#Dispersion estimate for gaussian family (sigma^2): 0.00761 
+
+#Conditional model:
+#Estimate Std. Error z value Pr(>|z|)  
+#(Intercept)      -0.003715   0.021806  -0.170   0.8647  
+#fPPM50           -0.026724   0.030838  -0.867   0.3862  
+#fPPM500          0.010446   0.030838   0.339   0.7348  
+#fPPM1000         0.024684   0.030838   0.800   0.4235  
+#fPPM2000         0.051869   0.030838   1.682   0.0926 .
+#fPPM4000        -0.037983   0.030838  -1.232   0.2181  
+
 Anova(Na_PI_model)
+#Analysis of Deviance Table (Type II Wald chisquare tests)
+
+#Response: new_PI
+#Chisq Df Pr(>Chisq)  
+#concentration 11.531  5    0.04182 *
 
 Na_contrasts <- emmeans(Na_PI_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
 
 Na_contrasts
+#Na_contrasts
+#fPPM   emmean     SE df lower.CL upper.CL
+#0    -0.00372 0.0218 inf  -0.0471  0.03902
+#50   -0.03044 0.0218 inf  -0.0738  0.01230
+#500   0.00673 0.0218 inf  -0.0366  0.04947
+#1000  0.02097 0.0218 inf  -0.0224  0.06371
+#2000  0.04815 0.0218 inf   0.0048  0.09089
+#4000 -0.04170 0.0218 inf  -0.0850  0.00104
+
+#Confidence level used: 0.95 
+
+#contrast            estimate     SE df z.ratio p.value
+#fPPM0 - fPPM50        0.0267 0.0308 Inf   0.867  0.9544
+#fPPM0 - fPPM500      -0.0104 0.0308 Inf  -0.339  0.9994
+#fPPM0 - fPPM1000     -0.0247 0.0308 Inf  -0.800  0.9675
+#fPPM0 - fPPM2000     -0.0519 0.0308 Inf  -1.682  0.5438
+#fPPM0 - fPPM4000      0.0380 0.0308 Inf   1.232  0.8214
+#fPPM50 - fPPM500     -0.0372 0.0308 Inf  -1.205  0.8345
+#fPPM50 - fPPM1000    -0.0514 0.0308 Inf  -1.667  0.5538
+#fPPM50 - fPPM2000    -0.0786 0.0308 Inf  -2.549  0.1103
+#fPPM50 - fPPM4000     0.0113 0.0308 Inf   0.365  0.9992
+#fPPM500 - fPPM1000   -0.0142 0.0308 86  -0.462  0.9974
+#fPPM500 - fPPM2000   -0.0414 0.0308 86  -1.343  0.7608
+#fPPM500 - fPPM4000    0.0484 0.0308 86   1.570  0.6182
+#fPPM1000 - fPPM2000  -0.0272 0.0308 86  -0.882  0.9510
+#fPPM1000 - fPPM4000   0.0627 0.0308 86   2.032  0.3239
+#fPPM2000 - fPPM4000   0.0899 0.0308 86   2.914  0.0416
+
+#P value adjustment: tukey method for comparing a family of 6 estimates 
 
 #Na Polynomials ####
 #With 2 terms
 summary(Na_PI_poly_red)
+# Family: gaussian  ( identity )
+#Formula:          
+#new_PI ~ poly(PPM,2) + (1 | date) + (1 | colony)
+#Data: Na_data
+
+#AIC      BIC       logLik deviance     df.resid 
+#-180.7   -162.8     97.4   -194.7       89 
+  
+#Conditional model:
+#Groups      Name        Variance  Std.Dev. 
+#date              (Intercept) 1.194e-12 1.093e-06
+#colony            (Intercept) 2.113e-13 4.596e-07
+#Residual                     7.702e-03 8.776e-02
+#Number of obs: 96, groups:  date, 13; colony, 10
+
+#Dispersion estimate for gaussian family (sigma^2): 0.0077 
+
+#Conditional model:
+#Estimate Std. Error z value Pr(>|z|)   
+#(Intercept)       -7.541e-15  8.957e-03   0.000  1.00000    
+#poly(PPM, 2)1 -5.563e-02  8.776e-02  -0.634  0.52617 
+#poly(PPM, 2)2 -2.750e-01  8.776e-02  -3.134  0.00173 **
+
 Anova(Na_PI_poly_red)
+#Analysis of Deviance Table (Type II Wald chisquare tests)
+#Response: new_PI
+#Chisq Df Pr(>Chisq)   
+#poly(PPM, 2) 10.222  2   0.006031 **
 
-
-summary(Na_PI_poly_red2)
-Anova(Na_PI_poly_red2)
+#Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
 
 #Visualize Na_model ####
-Na_PI_pred <- ggpredict(Na_PI_model, terms = 'fPPM [all]')
+plot(allEffects(Na_PI_model))
+plot(allEffects(Na_PI_poly))
 
 Na_labels = c('control\n(0)', 'low\n(50)', 'low-medium\n(500)', 
               'medium\n(1,000)', 
            'medium-high\n(2,000)', 'high\n(4,000)')
+
+Na_PI_pred <- ggpredict(Na_PI_model, terms = 'fPPM [all]')
 
 Na_gg_plot <- ggplot(Na_PI_pred, aes(x, predicted)) +
   geom_point(data = Na_data, colour = 'skyblue', size = 5,
@@ -337,7 +378,7 @@ Na_gg_poly_plot <- ggplot(Na_PI_poly_pred,
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
               fill = 'skyblue', alpha = 0.25,
               linetype = 0) +
-#  geom_line(colour = 'steelblue', linewidth = 0.8) +
+  geom_line(colour = 'steelblue', linewidth = 0.8) +
   geom_smooth(method = 
                 "loess", se = TRUE, colour = 'steelblue') +
   geom_hline(yintercept = mean(Na_PI_poly_pred$predicted), linetype = 'dashed') +
@@ -353,7 +394,6 @@ Na_gg_poly_plot
 ggsave("Na_PI_poly_LL.png", plot = Na_gg_poly_plot, width = 5, height = 5, units = "in", dpi = 300)
                      
 #Potassium (K)####
-#Plot PI (mL) by concentration (dashed line = 0)
 #Run model on K data####
 K_PI_model <- glmmTMB(new_PI ~ fPPM + 
                         (1 | date) +
@@ -367,12 +407,14 @@ K_PI_poly_red <- glmmTMB(new_PI ~ poly(PPM,2) +
                            (1 | colony),
                     family = gaussian, 
                      data = K_data)
+#Two terms does not fit the curve
 
 K_PI_poly_red2 <- glmmTMB(new_PI ~ poly(PPM,1) + 
                             (1 | date) +
                             (1 | colony),
                          family = gaussian, 
                          data = K_data)
+#The relationship is linear! 
 
 AIC(K_PI_poly_red, K_PI_poly_red2)
 
@@ -395,19 +437,102 @@ testResiduals(sim_Output)
 
 #K_PI_model ####
 summary(K_PI_model)
+#Family: gaussian  ( identity )
+#Formula:          
+#new_PI ~ concentration + (1 | colony) + (1 | date)
+#Data: K_data
+
+#AIC      BIC       logLik  deviance    df.resid 
+#-178.1   -152.5     99.1   -198.1       86 
+
+#Random effects:
+  
+#Conditional model:
+#Groups   Name        Variance  Std.Dev. 
+#date             (Intercept)   1.350e-13 3.674e-07
+#colony            (Intercept)  1.608e-12 1.268e-06
+#Residual                7.433e-03 8.621e-02
+#Number of obs: 96, groups:  date, 14; colony, 10
+
+#Dispersion estimate for gaussian family (sigma^2): 0.00743 
+
+#Conditional model:
+#Estimate Std. Error z value Pr(>|z|)    
+#(Intercept)     0.06442    0.02155   2.989   0.0028 ** 
+#fPPM10         -0.06977    0.03048  -2.289   0.0221 *  
+#fPPM100        -0.06530    0.03048  -2.142   0.0322 *  
+#fPPM1000       -0.05495    0.03048  -1.803   0.0714 .  
+#fPPM4500       -0.07058    0.03048  -2.316   0.0206 *  
+#fPPM10000      -0.12594    0.03048  -4.132  3.6e-05 *** 
+
 Anova(K_PI_model)
+#Analysis of Deviance Table (Type II Wald chisquare tests)
+
+#Response: new_PI
+#Chisq Df Pr(>Chisq)   
+#concentration 17.418  5   0.003771 **
 
 K_contrasts <- emmeans(K_PI_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
 K_contrasts
+#fPPM    emmean     SE df lower.CL upper.CL
+#0      0.06442 0.0216 Inf    0.0222    0.1067
+#10    -0.00534 0.0216 Inf   -0.0476    0.0369
+#100   -0.00088 0.0216 Inf   -0.0431    0.0414
+#1000   0.00947 0.0216 Inf   -0.0328    0.0517
+#4500  -0.00616 0.0216 Inf   -0.0484    0.0361
+#10000 -0.06152 0.0216 Inf   -0.1038   -0.0193
+
+#Confidence level used: 0.95 
+
+#contrast              estimate     SE df t.ratio p.value
+#fPPM0 - fPPM10        0.069766 0.0305 Inf   2.289  0.1985
+#fPPM0 - fPPM100       0.065302 0.0305 Inf   2.142  0.2654
+#fPPM0 - fPPM1000      0.054949 0.0305 Inf   1.803  0.4639
+#fPPM0 - fPPM4500      0.070579 0.0305 Inf   2.316  0.1876
+#fPPM0 - fPPM10000     0.125938 0.0305 Inf   4.132  0.0005
+#fPPM10 - fPPM100     -0.004464 0.0305 Inf  -0.146  1.0000
+#fPPM10 - fPPM1000    -0.014817 0.0305 Inf  -0.486  0.9967
+#fPPM10 - fPPM4500     0.000813 0.0305 Inf   0.027  1.0000
+#fPPM10 - fPPM10000    0.056172 0.0305 Inf   1.843  0.4380
+#fPPM100 - fPPM1000   -0.010353 0.0305 Inf  -0.340  0.9994
+#fPPM100 - fPPM4500    0.005277 0.0305 Inf   0.173  1.0000
+#fPPM100 - fPPM10000   0.060636 0.0305 Inf   1.989  0.3484
+#fPPM1000 - fPPM4500   0.015630 0.0305 Inf   0.513  0.9957
+#fPPM1000 - fPPM10000  0.070988 0.0305 Inf   2.329  0.1823
+#fPPM4500 - fPPM10000  0.055358 0.0305 Inf   1.816  0.4552
+
+#P value adjustment: tukey method for comparing a family of 6 estimates
 
 #Polynomials ####
-#With 2 terms
-summary(K_PI_poly_red)
-
 #With 1 term
 summary(K_PI_poly_red2)
+#Family: gaussian  ( identity )
+#Formula:          new_PI ~ scale(PPM_0) + (1 | date) + (1 | colony)
+#Data: K_data
+
+#AIC      BIC   logLik deviance df.resid 
+#-181.7   -168.8     95.8   -191.7       91 
+  
+#Conditional model:
+#Groups      Name        Variance  Std.Dev. 
+#date       (Intercept)   1.818e-12 1.348e-06
+#colony      (Intercept) 1.510e-13 3.886e-07
+#Residual                7.952e-03 8.917e-02
+#Number of obs: 96, groups:  date, 14; colony, 10
+
+#Dispersion estimate for gaussian family (sigma^2): 0.00795 
+
+#Conditional model:
+#Estimate Std. Error z value Pr(>|z|)   
+#(Intercept)  7.197e-12  9.101e-03   0.000  1.00000   
+#scale(PPM_0) -2.822e-01  8.917e-02  -3.164  0.00155 **
 
 #Visualise K_model ####
+plot(allEffects(K_PI_model))
+plot(allEffects(K_PI_poly))
+plot(allEffects(K_PI_poly_red))
+plot(allEffects(K_PI_poly_red2))
+
 K_labels = c('control\n(0)', 'low\n(10)', 'low-medium\n(100)', 
               'medium\n(1,000)', 
               'medium-high\n(4,500)', 'high\n(10,000)')
@@ -518,17 +643,21 @@ Ca_PI_model <- glmmTMB(new_PI ~ fPPM +
                        family = gaussian,
                        data = Ca_data)
 
+#Polynomial models
 Ca_PI_poly_red <- glmmTMB(new_PI ~ poly(PPM,2) + 
                         (1|date) + (1 | colony),
                         family = gaussian, 
                       data = Ca_data)
+#Two terms does not fit curve
 
 Ca_PI_poly_red2 <- glmmTMB(new_PI ~ poly(PPM,1) +
                             (1|date) + (1 | colony), 
                            family = gaussian, 
                           data = Ca_data)
+#One term fits line for PI as the response variable and is almost significant for sqrt(corrected_av_per_bee_mL)
 
 AIC(Ca_PI_poly_red, Ca_PI_poly_red2)
+
 #df       AIC
 #Ca_PI_poly_red   6 -187.3270
 #Ca_PI_poly_red2  5 -189.3147
@@ -548,21 +677,99 @@ testResiduals(sim_Output)
 
 #Ca_PI_model ####
 summary(Ca_PI_model)
+#Family: gaussian  ( identity )
+#Formula:          
+#new_PI ~ concentration + (1 | date) + (1 | colony)
+#Data: Ca_data
+
+#AIC      BIC       logLik  deviance    df.resid 
+#-186.7   -163.6    102.3   -204.7       87
+
+#Random effects:
+  
+#Conditional model:
+#Groups   Name        Variance  Std.Dev. 
+#date         (Intercept) 6.349e-13 7.968e-07
+#colony      (Intercept) 1.313e-12 1.146e-06
+#Residual                6.945e-03 8.334e-02
+#Number of obs: 96, groups:  date, 13; colony, 10
+
+#Dispersion estimate for gaussian family (sigma^2): 0.00694 
+
+#Conditional model:
+#Estimate Std. Error z value Pr(>|z|)  
+#(Intercept)  0.014115   0.020834   0.677   0.4981  
+#fPPM1       -0.038516   0.029464  -1.307   0.1911  
+#fPPM10       0.026526   0.029464   0.900   0.3680  
+#fPPM50       0.006296   0.029464   0.214   0.8308  
+#fPPM225     -0.027910   0.029464  -0.947   0.3435  
+#fPPM500     -0.051089   0.029464  -1.734   0.0829 .
+
 Anova(Ca_PI_model)
+#Analysis of Deviance Table (Type II Wald chisquare tests)
+
+#Response: new_PI
+#Chisq Df Pr(>Chisq)  
+#concentration 10.184  5     0.0702 .
 
 Ca_contrasts <- emmeans(Ca_PI_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
 Ca_contrasts
+#fPPM  emmean     SE df  lower.CL upper.CL
+#0     0.0141 0.0208 Inf -0.026719   0.05495
+#1    -0.0244 0.0208 Inf -0.065235   0.01643
+#10    0.0406 0.0208 Inf -0.000193   0.08148
+#50    0.0204 0.0208 Inf -0.020423   0.06125
+#225  -0.0138 0.0208 Inf -0.054628   0.02704
+#500  -0.0370 0.0208 Inf -0.077808   0.00386
+
+#Confidence level used: 0.95 
+
+#contrast          estimate     SE df t.ratio p.value
+#fPPM0 - fPPM1       0.0385 0.0295 Inf   1.307  0.7812
+#fPPM0 - fPPM10     -0.0265 0.0295 Inf  -0.900  0.9465
+#fPPM0 - fPPM50     -0.0063 0.0295 Inf  -0.214  0.9999
+#fPPM0 - fPPM225     0.0279 0.0295 Inf   0.947  0.9341
+#fPPM0 - fPPM500     0.0511 0.0295 Inf   1.734  0.5091
+#fPPM1 - fPPM10     -0.0650 0.0295 Inf  -2.208  0.2341
+#fPPM1 - fPPM50     -0.0448 0.0295 Inf  -1.521  0.6507
+#fPPM1 - fPPM225    -0.0106 0.0295 Inf  -0.360  0.9992
+#fPPM1 - fPPM500     0.0126 0.0295 Inf   0.427  0.9982
+#fPPM10 - fPPM50     0.0202 0.0295 Inf   0.687  0.9835
+#fPPM10 - fPPM225    0.0544 0.0295 Inf   1.848  0.4350
+#fPPM10 - fPPM500    0.0776 0.0295 Inf   2.634  0.0891
+#fPPM50 - fPPM225    0.0342 0.0295 Inf   1.161  0.8554
+#fPPM50 - fPPM500    0.0574 0.0295 Inf   1.948  0.3730
+#fPPM225 - fPPM500   0.0232 0.0295 Inf   0.787  0.9699
 
 #Polynomials ####
-#with 2 terms
-summary(Ca_PI_poly_red)
-Anova(Ca_PI_poly_red)
-
 #with 1 term
 summary(Ca_PI_poly_red2) #Significant fit for linear model
-Anova(Ca_PI_poly_red2)
+# Family: gaussian  ( identity )
+#Formula:          new_PI ~ poly(PPM, 1) + (1 | date) + (1 | colony)
+#Data: Ca_data
 
+#AIC      BIC       logLik  deviance    df.resid 
+#-189.3   -176.5     99.7   -199.3       91 
+
+#Conditional model:
+#Groups      Name        Variance  Std.Dev. 
+#date         (Intercept) 1.629e-12 1.276e-06
+#colony      (Intercept) 4.264e-14 2.065e-07
+#Residual                7.343e-03 8.569e-02
+#Number of obs: 96, groups:  date, 13; colony, 10
+
+#Dispersion estimate for gaussian family (sigma^2): 0.00734 
+
+#Conditional model:
+#Estimate Std. Error z value Pr(>|z|)  
+#(Intercept)   8.863e-11  8.746e-03   0.000   1.0000  
+#poly(PPM,1)  -1.804e-01  8.569e-02  -2.106   0.0352 *
+  
 #Visualise Ca_model####
+plot(allEffects(Ca_PI_model))
+plot(allEffects(Ca_PI_poly))
+plot(allEffects(Ca_PI_poly_red2))
+
 Ca_labels = c('control\n(0)', 'low\n(1)', 'low-medium\n(10)', 
              'medium\n(50)', 
              'medium-high\n(225)', 'high\n(500)')
@@ -587,30 +794,6 @@ Ca_gg_plot <- ggplot(Ca_PI_pred, aes(x, predicted)) +
 Ca_gg_plot 
 
 ggsave("Ca_PI_plot_LL.png", plot = Ca_gg_plot, width = 6, height = 4, units = "in", dpi = 300)
-
-Ca_PI_poly_pred <- ggpredict(Ca_PI_poly_red2, terms = 'PPM [all]')
-Ca_gg_poly_plot <- ggplot(Ca_PI_poly_pred,
-                         aes(x, predicted)) +
-  geom_point(data = Ca_data, colour = 'green3', size = 5,
-             alpha = 0.5,
-             aes(y = new_PI, x = PPM)) +
-  geom_pointrange(aes(ymin = conf.low,
-                      ymax = conf.high), colour = 'darkgreen',
-                  size = 1.2, linewidth = 2) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
-              fill = 'green3', alpha = 0.25,
-              linetype = 0) +
-  geom_smooth(method = "loess", se = TRUE, colour = 'darkgreen') +
-  geom_hline(yintercept = mean(Ca_PI_poly_pred$predicted), linetype = 'dashed') +
-  theme_classic() +
-  xlab('') +
-  ylab('') +
-  ylim(-0.2, 0.5) +
-  guides(fill = FALSE) + theme(axis.text = element_text(size = 18))
-
-Ca_gg_poly_plot 
-
-ggsave("Ca_PI_poly_LL.png", plot = Ca_gg_poly_plot, width = 6, height = 4, units = "in", dpi = 300)
 
 #Cohort level
 Ca_data <- Ca_data %>%
@@ -649,6 +832,31 @@ Ca_gg_plot_cohort <- ggplot() +
 Ca_gg_plot_cohort
 ggsave("Ca_PI_plot_LL_cohort.png", plot = Ca_gg_plot_cohort, width = 6, height = 4, units = "in", dpi = 300)
 
+#Polynomials
+Ca_PI_poly_pred <- ggpredict(Ca_PI_poly_red2, terms = 'PPM [all]')
+Ca_gg_poly_plot <- ggplot(Ca_PI_poly_pred,
+                         aes(x, predicted)) +
+  geom_point(data = Ca_data, colour = 'green3', size = 5,
+             alpha = 0.5,
+             aes(y = new_PI, x = PPM)) +
+  geom_pointrange(aes(ymin = conf.low,
+                      ymax = conf.high), colour = 'darkgreen',
+                  size = 1.2, linewidth = 2) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
+              fill = 'green3', alpha = 0.25,
+              linetype = 0) +
+  geom_smooth(method = "loess", se = TRUE, colour = 'darkgreen') +
+  geom_hline(yintercept = mean(Ca_PI_poly_pred$predicted), linetype = 'dashed') +
+  theme_classic() +
+  xlab('') +
+  ylab('') +
+  ylim(-0.2, 0.5) +
+  guides(fill = FALSE) + theme(axis.text = element_text(size = 18))
+
+Ca_gg_poly_plot 
+
+ggsave("Ca_PI_poly_LL.png", plot = Ca_gg_poly_plot, width = 6, height = 4, units = "in", dpi = 300)
+
 #Ca post hoc tests ####
 #Coefficients table
 ggcoef_table(Ca_PI_model)
@@ -677,13 +885,16 @@ Mg_PI_poly_red <- glmmTMB(new_PI ~ poly(PPM, 2)
                       +  (1|date) + (1 | colony),
                       family = gaussian,
                       data = Mg_data)
+#Two terms does not fit curve 
 
 Mg_PI_poly_red2 <- glmmTMB(new_PI ~ poly(PPM,1) + 
                           (1|date) + (1 | colony), 
                           family = gaussian, 
                           data = Mg_data)
+#One term is significant - relationship is a straight line!
 
 AIC(Mg_PI_poly_red, Mg_PI_poly_red2)
+
 #df       AIC
 #Mg_PI_poly_red   6 -152.1251
 #Mg_PI_poly_red2  5 -153.7779
@@ -703,20 +914,105 @@ testResiduals(sim_Output)
 
 #Mg_PI_model ####
 summary(Mg_PI_model)
+#Family: gaussian  ( identity )
+#Formula:          
+#new_PI ~ concentration + (1 | date) + (1 | colony)
+#Data: mg_data
+
+#AIC      BIC       logLik  deviance    df.resid 
+#-149.6   -124.0     84.8   -169.6       86 
+
+#Random effects:
+  
+#Conditional model:
+#Groups   Name        Variance  Std.Dev. 
+#date        (Intercept) 1.088e-12 1.043e-06
+#colony      (Intercept) 6.103e-13 7.812e-07
+#Residual                1.001e-02 1.000e-01
+#Number of obs: 96, groups:  date, 15; colony, 10
+
+#Dispersion estimate for gaussian family (sigma^2): 0.01 
+
+#Conditional model:
+#Estimate Std. Error z value Pr(>|z|)   
+#(Intercept)  0.05862    0.02501   2.344  0.01906 * 
+#fPPM5       -0.08160    0.03537  -2.307  0.02104 * 
+#fPPM10      -0.02685    0.03537  -0.759  0.44767   
+#fPPM300     -0.05831    0.03537  -1.649  0.09920 . 
+#fPPM1350    -0.08124    0.03537  -2.297  0.02161 * 
+#fPPM3000    -0.10375    0.03537  -2.934  0.00335 **
+
 Anova(Mg_PI_model)
+#Analysis of Deviance Table (Type II Wald chisquare tests)
+
+#Response: new_PI
+#Chisq Df Pr(>Chisq)  
+#concentration 12.028  5    0.03441 *
 
 Mg_contrasts <- emmeans(Mg_PI_model, pairwise ~ fPPM, type = 'response',
                         adjust = 'mvt')
 Mg_contrasts
+#fPPM    emmean    SE df lower.CL upper.CL
+#0     0.058625 0.025 Inf   0.00961   0.10764
+#5    -0.022971 0.025 Inf  -0.07198   0.02604
+#10    0.031772 0.025 Inf  -0.01724   0.08078
+#300   0.000316 0.025 Inf  -0.04870   0.04933
+#1350 -0.022617 0.025 Inf  -0.07163   0.02640
+#3000 -0.045124 0.025 Inf  -0.09414   0.00389
+
+#Confidence level used: 0.95 
+
+#contrast             estimate     SE df t.ratio p.value
+#fPPM0 - fPPM5        0.081595 0.0354 Inf   2.307  0.1910
+#fPPM0 - fPPM10       0.026853 0.0354 Inf   0.759  0.9742
+#fPPM0 - fPPM300      0.058309 0.0354 Inf   1.649  0.5660
+#fPPM0 - fPPM1350     0.081242 0.0354 Inf   2.297  0.1950
+#fPPM0 - fPPM3000     0.103748 0.0354 Inf   2.934  0.0393
+#fPPM5 - fPPM10      -0.054742 0.0354 Inf  -1.548  0.6330
+#fPPM5 - fPPM300     -0.023286 0.0354 Inf  -0.658  0.9863
+#fPPM5 - fPPM1350    -0.000353 0.0354 Inf  -0.010  1.0000
+#fPPM5 - fPPM3000     0.022153 0.0354 Inf   0.626  0.9891
+#fPPM10 - fPPM300     0.031456 0.0354 Inf   0.889  0.9492
+#fPPM10 - fPPM1350    0.054389 0.0354 Inf   1.538  0.6396
+#fPPM10 - fPPM3000    0.076895 0.0354 Inf   2.174  0.2498
+#fPPM300 - fPPM1350   0.022933 0.0354 Inf   0.648  0.9872
+#fPPM300 - fPPM3000   0.045439 0.0354 Inf   1.285  0.7935
+#fPPM1350 - fPPM3000  0.022507 0.0354 Inf   0.636  0.9883
+
+#P value adjustment: tukey method for comparing a family of 6 estimates 
 
 #Mg Polynomials to fit curve ####
-summary(Mg_PI_poly_red)
-Anova(Mg_PI_poly_red)
-
 summary(Mg_PI_poly_red2)
-Anova(Mg_PI_poly_red2)
+#Family: gaussian  ( identity )
+#Formula:          new_PI ~ poly(PPM, 1) + (1 | date) + (1 | colony)
+#Data: Mg_data
+
+#AIC      BIC     logLik    deviance df.resid 
+#-153.8   -141.0     81.9   -163.8       91 
+
+#Conditional model:
+#Groups      Name        Variance  Std.Dev. 
+#date         (Intercept) 3.312e-13 5.755e-07
+#colony       (Intercept) 2.290e-12 1.513e-06
+#Residual                1.063e-02 1.031e-01
+#Number of obs: 96, groups:  date, 15; colony, 10
+
+#Dispersion estimate for gaussian family (sigma^2): 0.0106 
+
+#Conditional model:
+#Estimate Std. Error z value Pr(>|z|)  
+#(Intercept)   1.491e-12  1.052e-02    0.00   1.0000  
+#poly(PPM, 1) -2.454e-01  1.031e-01   -2.38   0.0173 *
 
 #Visualize Mg_model ####
+plot(allEffects(Mg_PI_model))
+plot(allEffects(Mg_PI_poly))
+plot(allEffects(Mg_PI_poly_red2))
+
+Mg_labels = c('control\n(0)', 'low\n(5)', 'low-medium\n(10)', 
+              'medium\n(300)', 
+              'medium-high\n(1,350)', 'high\n(3,000)')
+
 Mg_PI_pred <- ggpredict(Mg_PI_model, terms = 'fPPM[all]')
 
 Mg_gg_plot <- ggplot(Mg_PI_pred, aes(x, predicted)) +
@@ -811,10 +1107,127 @@ ggcoef_compare(models)
 post_Mg_PI <- lsmeans(Mg_PI_model, pairwise ~ fPPM)
 contrast(post_Mg_PI, alpha = 0.05, method = 'pairwise', adjust = 'Tukey')
 
-#All plots
-ggarrange(Na_PI_plot, K_PI_plot, Ca_PI_plot, Mg_PI_plot, ncol=2, nrow=2, common.legend=T, legend="right", labels = c("Na","K","Ca","Mg"))
+#Climatic Analysis####
+#Using LMM with humidity and temperature as continuous explanatory variables, analyte as a fixed categorical variable and date, arena, and colony as random effects.
+#linearity assumption violated. Including a polynomial term to improve fit. 
 
-ggarrange(Na_PI_poly_plot, K_PI_poly_plot, Ca_PI_poly_plot, Mg_PI_poly_plot, ncol=2, nrow=2, common.legend=T, legend="right", labels = c("Na","K","Ca","Mg"))
+clim_model <- glmmTMB(corrected_av_per_bee_mL ~ 
+                      scale(temp_C) * scale(humidity_percent) +
+                        analyte * concentration +
+                        (1 | date) +
+                      (1 | colony),
+                      family = beta_family,
+                        data = Behav_data)
 
-ggarrange(Na_PI_plot, Na_PI_plot_out, ncol = 2, nrow = 1, common.legend = T, legend = 'right', labels = c('Na', 'Na without outliers'))
+clim_short <- glmmTMB(corrected_av_per_bee_mL ~ 
+                        scale(temp_C) * scale(humidity_percent) +
+                        analyte + concentration +
+                        (1 | date) +
+                        (1 | colony),
+                      family = beta_family,
+                      data = Behav_data)
 
+clim_only <- glmmTMB(corrected_av_per_bee_mL ~ 
+                                scale(temp_C) * scale(humidity_percent) +
+                                (1 | date) +
+                                (1 | colony),
+                              family = beta_family,
+                              data = Behav_data)
+
+AIC(clim_model, clim_short, clim_only)
+#df       AIC
+#clim_model  30 -2805.911
+#clim_short  15 -2819.568
+#clim_only    7 -2808.319
+
+plot(allEffects(clim_model))
+plot(allEffects(clim_short))
+plot(allEffects(clim_only))
+
+summary(clim_short)
+#AIC       BIC    logLik -2*log(L)  df.resid 
+#-2819.6   -2760.3    1424.8   -2849.6       369 
+
+#Random effects:
+#Conditional model:
+#Groups Name        Variance  Std.Dev. 
+#date   (Intercept) 6.875e-03 8.292e-02
+#colony (Intercept) 2.081e-09 4.562e-05
+#Number of obs: 384, groups:  date, 32; colony, 10
+
+#Dispersion parameter for beta family ():  266 
+
+#Conditional model:
+#Estimate Std. Error z value Pr(>|z|)    
+#(Intercept)                           -4.11455    0.08374  -49.14  < 2e-16 ***
+#scale(temp_C)                          0.06359    0.03865    1.65 0.099920 .  
+#scale(humidity_percent)               -0.11822    0.03671   -3.22 0.001280 ** 
+#analyteK                              -0.04761    0.08119   -0.59 0.557640    
+#analyteMg                             -0.12319    0.08082   -1.52 0.127426    
+#analyteNa                             -0.18074    0.08465   -2.14 0.032754 *  
+#concentrationlow                      -0.24974    0.09130   -2.74 0.006228 ** 
+#concentrationlow_medium               -0.08044    0.08818   -0.91 0.361683    
+#concentrationmedium                   -0.06480    0.08813   -0.74 0.462173    
+#concentrationmedium_high              -0.15069    0.08979   -1.68 0.093300 .  
+#concentrationhigh                     -0.38501    0.09425   -4.09 4.41e-05 ***
+#scale(temp_C):scale(humidity_percent)  0.13544    0.04022    3.37 0.000758 ***
+
+Anova(clim_short)
+#Response: corrected_av_per_bee_mL
+#Chisq Df Pr(>Chisq)    
+#scale(temp_C)                          7.5147  1  0.0061199 ** 
+#scale(humidity_percent)                7.6722  1  0.0056078 ** 
+#analyte                                5.5090  3  0.1380992    
+#concentration                         21.9307  5  0.0005397 ***
+#scale(temp_C):scale(humidity_percent) 11.3414  1  0.0007580 ***
+
+#Check model assumptions
+check_model(clim_short) #OK
+
+#Dharma tests
+sim_Output <- simulateResiduals(clim_short, n = 250)
+
+plot(sim_Output) #OK
+testResiduals(sim_Output) #Outliers
+
+#interaction plot with temperature on the x axis
+interact_plot <- interact_plot(clim_short, pred = temp_C, modx = humidity_percent, 
+              interval = TRUE, int.width = 0.6,
+              plot.points = FALSE,
+              data = Behav_data,
+              x.label = 'Temperature (C)',
+              y.label = 'Average Consumption per Bee (mL)',
+              legend.main = 'Humidity (%)',
+              main = '') +
+  theme_classic()
+interact_plot + theme(axis.text = element_text(size = 14),
+                      axis.title = element_text(size = 16))
+
+flip_plot <- interact_plot(clim_short, pred = humidity_percent, modx = temp_C, 
+                               interval = TRUE, int.width = 0.6,
+                               plot.points = FALSE,
+                               data = Behav_data,
+                               x.label = 'Humidity (%)',
+                               y.label = 'Average Consumption per Bee (mL)',
+                               legend.main = 'Temperature (C)',
+                               main = '') +
+  theme_classic() + theme(axis.text = element_text(size = 10),
+                      axis.title = element_text(size = 14))
+flip_plot
+
+ggsave("interaction_plot.png", plot = flip_plot, width = 6, height = 4, units = "in", dpi = 300)
+
+#interaction plot with humidity on the x axis
+interact_clim <- interact_plot(clim_short, pred = humidity_percent, modx = temp_C, 
+              interval = TRUE, int.width = 0.6,
+              plot.points = TRUE,
+              data = Behav_data,
+              x.label = 'Humidity (%)',
+              y.label = 'Average Consumption per Bee (mL)',
+              legend.main = 'Temperature (C)',
+              main = '') +
+  theme_classic()  + theme(axis.text = element_text(size = 10),
+                   axis.title = element_text(size = 14))
+interact_clim
+
+ggsave("interaction_plot_raw.png", plot = interact_clim, width = 6, height = 4, units = "in", dpi = 300)
