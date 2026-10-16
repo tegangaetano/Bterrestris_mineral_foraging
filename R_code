@@ -1,529 +1,820 @@
 #Author: Tegan Gaetano
-#Foraging preference for essential mineral salts in the buff-tailed bumblebee (Bombus terrestris audax)
-#13/03/2026
+#Behavioural responses to a range of mineral salt concentrations in the buff-tailed bumblebee (Bombus terrestris audax)
+#October 2026
+#Author: Tegan Gaetano
 
-#LOAD PACKAGES####
+#PACKAGES####
 #General
 library(readxl) #read in .xls and .xlsx files
 library(tidyverse) #load core tidyverse packages
 library(dplyr) #data manipulation and organisation
 
 #Visualization
-library(ggplot2) #data visualization - part of tidyverse
+library(ggplot2) #data visualization
+library(cowplot) #extension of ggplot2 to combine multiple plots
+library(ggpubr)
 
 #Analysis
-install.packages('car')
 library(car) #ANOVA and other regression analysis
+library(emmeans) #obtain estimated marginal means for linear and mixed models
 library(glmmTMB) #linear and generalised linear models
-library(performance) #assess model quality
-library(DHARMa) #residual diagnostics; https://steffilazerte.ca/posts/dharma/
+library(interactions) #summarise and visualize interactions
+library(effects)
 
 #Post-hoc tests 
-library(emmeans) #obtain estimated marginal means for linear and mixed models
+library(performance) #assess model quality
+library(DHARMa) #residual diagnostics; https://steffilazerte.ca/posts/dharma/
+library(ggeffects) #calculate marginal effects; https://strengejacke.github.io/ggeffects/
 
-#LOAD DATA####
-#Import data as Excel spreadsheet
-all_data <- read_excel("C:/Users/r01tg22/Desktop/Behav_exp/all_data.xlsx")
-
+#DATA####
 #Reduce dataset to desired columns
-all_data <- all_data[c('date', 'observer', 'duration_mins',
+Behav_data <- Behav_data[c('date', 'observer', 'duration_mins',
                            'temp_C', 'humidity',
                            'colony', 'arena',
                            'analyte', 'concentration', 'PPM',
-                           'evap-corrected_per_bee_mL', 
-                           'total_consumed_mL')]
+                           'corrected_av_per_bee_mL', 
+                           'av_total_consumed_mL')]
 
 Behav_data <- as.data.frame(Behav_data)
 
 #Convert data to numeric
-Behav_data$PPM <- as.numeric(all_data$PPM)
-Behav_data$new_NCV <- as.numeric(all_data$new_NCV)
+Behav_data$PPM <- as.numeric(Behav_data$PPM)
 
 #Create new PPM as a factor
-Behav_data$fPPM <- as.factor(all_data$PPM)
+Behav_data$fPPM <- as.factor(Behav_data$PPM)
 
 #Change the decimal humidity to a percent
-all_data$humidity_percent <- all_data$humidity * 100
+Behav_data$humidity_percent <- Behav_data$humidity * 100
 
 #Convert data to factor
-all_data$observer <- as.factor(all_data$observer)
-all_data$arena <- as.factor(all_data$arena)
-all_data$colony <- as.factor(all_data$colony)
-all_data$analyte <- as.factor(all_data$analyte)
-all_data$concentration <- factor(all_data$concentration, 
+Behav_data$observer <- as.factor(Behav_data$observer)
+Behav_data$arena <- as.factor(Behav_data$arena)
+Behav_data$colony <- as.factor(Behav_data$colony)
+Behav_data$analyte <- as.factor(Behav_data$analyte)
+Behav_data$concentration <- factor(Behav_data$concentration, 
                                    levels = c('control', 
                                               'low', 
                                               'low_medium',
                                               'medium',
                                               'medium_high',
                                               'high'))
-#FILTER DATA####
+
+#Add column for new PI algorithm (t-(T/6)/T)
+Behav_data$new_PI <- ((Behav_data$corrected_av_per_bee_mL -                       (Behav_data$av_total_consumed_mL / 6)) /
+                        Behav_data$av_total_consumed_mL)
+
+Behav_data$new_PI <- as.numeric(Behav_data$new_PI)
+
+#Filter data####
 #Filter analyte data
-Na_data <- all_data %>%
+Na_data <- Behav_data %>%
   filter(analyte == 'Na')
 
-Ca_data <- all_data %>%
+Ca_data <- Behav_data %>%
   filter(analyte == 'Ca')
 
-K_data <- all_data %>%
+K_data <- Behav_data %>%
   filter(analyte == 'K')
 
-Mg_data <- all_data %>%
+Mg_data <- Behav_data %>%
   filter(analyte == 'Mg')
 
-#ANALYSIS####
-#Climatic Model
+#Data exploration####
+#Assess spread and outliers with dotcharts
+#Overall
+dotchart(Behav_data$corrected_av_per_bee_mL, main = 'Average consumption (mL) per bee')
+dotchart(Behav_data$new_PI, main = 'Preference index (mL)')
 
-#Using LMM with humidity and temperature and their interaction as continuous variables predicting per bee consumption of
-#test solution (mL) and date and colony as random effects.
-clim_model <- glmmTMB(evap-corrected_per_bee_mL ~ 
+#Consumption by concentration
+dotchart(sqrt(Behav_data$corrected_av_per_bee_mL), 
+         groups = Behav_data$concentration,
+         main = 
+           'sqrt Average consumption (mL) per bee by concentration')
+
+dotchart(Behav_data$new_PI, groups = Behav_data$concentration,
+         main = 'PI by concentration')
+
+#Consumption by analyte
+dotchart(sqrt(Behav_data$corrected_av_per_bee_mL), groups = Behav_data$analyte,
+         main = 'sqrt Average consumption (mL) per bee by analyte')
+
+dotchart(Behav_data$new_PI, groups = Behav_data$analyte, 
+         main = 'PI by analyte')
+
+#Create a data frame with outliers removed
+#find Q1, Q3, and interquartile range for new_PI
+Q1_PI <- quantile(Behav_data$new_PI, .25)
+Q3_PI <- quantile(Behav_data$new_PI, .75)
+IQR_PI <- IQR(Behav_data$new_PI)
+
+no_outliers_PI <- subset(Behav_data, Behav_data$new_PI > (Q1_PI - 1.5*IQR) &
+                        Behav_data$new_PI < (Q3_PI + 1.5*IQR_PI))
+
+dim(no_outliers_PI)
+# 375  15
+
+Q1 <- quantile(Behav_data$corrected_av_per_bee_mL, .25)
+Q3 <- quantile(Behav_data$corrected_av_per_bee_mL, .75)
+IQR <- IQR(Behav_data$corrected_av_per_bee_mL)
+
+no_outliers <- subset(Behav_data, Behav_data$corrected_av_per_bee_mL > (Q1 - 1.5*IQR) &
+                           Behav_data$corrected_av_per_bee_mL < (Q3 + 1.5*IQR))
+
+dim(no_outliers)
+# 379  15
+
+par(mfrow = c(2,2))
+dotchart(Behav_data$new_PI, groups = Behav_data$analyte, 
+         main = 'PI by analyte')
+dotchart(no_outliers$new_PI, groups = no_outliers$analyte, 
+         main = 'PI by analyte')
+
+dotchart(Behav_data$new_PI, groups = Behav_data$concentration,
+         main = 'PI by concentration')
+dotchart(no_outliers$new_PI, groups = no_outliers$concentration,
+         main = 'PI by concentration')
+
+#Transform the y 
+qqnorm(Behav_data$corrected_av_per_bee_mL, pch = 1, frame = FALSE)
+qqline(Behav_data$corrected_av_per_bee_mL, col = 'firebrick', lwd = 2)
+
+ks.test(Behav_data$corrected_av_per_bee_mL, 'pnorm')
+ks.test(sqrt(Behav_data$corrected_av_per_bee_mL), 'pnorm')
+
+#sqrt - Best fits the data for response variable 'corrected_av_per_bee_mL' 
+qqnorm(sqrt(Behav_data$corrected_av_per_bee_mL), pch = 1, frame = FALSE)
+qqline(sqrt(Behav_data$corrected_av_per_bee_mL), col = 'firebrick', lwd = 2)
+
+hist(sqrt(Behav_data$corrected_av_per_bee_mL), freq=FALSE)
+lines(density(sqrt(Behav_data$corrected_av_per_bee_mL)))
+
+#Analysis####
+#Using LMM with humidity and temperature as continuous explanatory variables, analyte as a fixed categorical variable and date, arena, and colony as random effects.
+clim_model <- glmmTMB(corrected_av_per_bee_mL ~ 
                       scale(temp_C) * scale(humidity_percent) +
+                        analyte * concentration +
                         (1 | date) +
                       (1 | colony),
                       family = beta_family,
-                        data = all_data)
+                        data = Behav_data)
 
-#Check goodness of fit
+Anova(clim_short)
+
+#Check model assumptions
+check_model(clim_model) #OK
+
+#Dharma tests
 sim_Output <- simulateResiduals(clim_model, n = 250)
 
-plot(sim_Output)
+plot(sim_Output) #OK
 testResiduals(sim_Output) 
 
-summary(clim_model)
-Anova(clim_model)
+#interaction plot with temperature on the x axis
+flip_plot <- interact_plot(clim_model, pred = humidity_percent, modx = temp_C, 
+                               interval = TRUE, int.width = 0.6,
+                               plot.points = FALSE,
+                               data = Behav_data,
+                               x.label = 'Humidity (%)',
+                               y.label = 'Average Consumption per Bee (mL)',
+                               legend.main = 'Temperature (C)',
+                               main = '') +
+  theme_classic() + theme(axis.text = element_text(size = 10),
+                      axis.title = element_text(size = 14))
 
-#Create interaction plot with humidity on the x axis
+flip_plot
+
+ggsave("interaction_plot.png", plot = flip_plot, width = 6, height = 4, units = "in", dpi = 300)
+
+#interaction plot with humidity on the x axis
 interact_clim <- interact_plot(clim_model, pred = humidity_percent, modx = temp_C, 
               interval = TRUE, int.width = 0.6,
               plot.points = TRUE,
-              data = all_data,
+              data = Behav_data,
               x.label = 'Humidity (%)',
               y.label = 'Average Consumption per Bee (mL)',
               legend.main = 'Temperature (C)',
               main = '') +
-  theme_classic()
+  theme_classic()  + theme(axis.text = element_text(size = 10),
+                   axis.title = element_text(size = 14))
 
-interact_clim + theme(axis.text = element_text(size = 14),
-                   axis.title = element_text(size = 16))
+interact_clim
 
-#ANALYSIS BY ANALYTE####
-#Sodium (Na)####
-#Using LMM with PPM as a categorical factor explanatory variable predicting normalised consumption value (NCV)
-#and date and colony as random effects.
-Na_NCV_model <- glmmTMB(NCV_mL ~ fPPM + 
+ggsave("interaction_plot_raw.png", plot = interact_clim, width = 6, height = 4, units = "in", dpi = 300)
+
+#Analysis by analyte####
+#Potential random effects to include: date (17 levels), colony (10 levels), observer (3 levels), arena (2 levels)
+#Sodium (Na) ####
+#Plot PI (mL) by concentration (dashed line = 0)
+
+#Run model on Na data####
+Na_PI_model <- glmmTMB(new_PI ~ fPPM + 
                          (1 | date) +
                          (1 | colony),
                         family = gaussian, 
                        data = Na_data)
 
-#Using LMM with PPM as a continuous explanatory variable fit with a quadratic term to predict NCV with date and colony
-#With three terms
-Na_NCV_poly <- glmmTMB(NCV_mL ~ poly(PPM, 3) +
-                      (1 | date) +
-                        (1 | colony),
-                      family = gaussian, 
-                      data = Na_data)
-
-#With two terms
-Na_NCV_poly_red <- glmmTMB(NCV_mL ~ poly(PPM, 2) +
+#Polynomial models to fit a curve
+Na_PI_poly_red <- glmmTMB(new_PI ~ poly(PPM, 2) +
                             (1 | date) +
                             (1 | colony),
                           family = gaussian, 
                           data = Na_data)
 
-#With one term
-Na_NCV_poly_red2 <- glmmTMB(NCV_mL ~ poly(PPM, 1) +
+Na_PI_poly_red2 <- glmmTMB(new_PI ~ poly(PPM, 1) +
                             (1 | date) +
                             (1 | colony),
                           family = gaussian, 
                           data = Na_data)
+
+AIC(Na_PI_poly_red, Na_PI_poly_red2)
+#df       AIC
+#Na_PI_poly_red   6 -182.7287
+#Na_PI_poly_red2  5 -175.3794
 
 #Check model assumptions
-check_model(Na_NCV_model) 
-check_model(Na_NCV_poly) 
-check_model(Na_NCV_poly_red) 
-check_model(Na_NCV_poly_red2) 
+check_model(Na_PI_model) #OK
+check_model(Na_PI_poly_red) #OK
 
 #Dharma tests
-sim_Output <- simulateResiduals(Na_NCV_model, n = 250) 
-sim_Output <- simulateResiduals(Na_NCV_poly, n = 250) 
-sim_Output <- simulateResiduals(Na_NCV_poly_red, n = 250) 
-sim_Output <- simulateResiduals(Na_NCV_poly_red2, n = 250) 
-
-#Check model fit
-AIC(Na_NCV_poly, Na_NCV_poly_red, Na_NCV_poly_red2)
+sim_Output <- simulateResiduals(Na_PI_model, n = 250) #OK 
+sim_Output <- simulateResiduals(Na_PI_poly_red, n = 250) #KS test significant, p = 0.0389; outlier test significant, p = 0.04184
 
 plot(sim_Output)
 testResiduals(sim_Output)
 
-summary(Na_NCV_model)
-Anova(Na_NCV_model)
+#Na_PI_model ####
+summary(Na_PI_model)
+Anova(Na_PI_model)
 
-summary(Na_NCV_poly_red)
-Anova(Na_NCV_poly_red)
+Na_contrasts <- emmeans(Na_PI_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
 
-#Examine contrasts
-Na_contrasts <- emmeans(Na_NCV_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
-Na_contrasts    
+Na_contrasts
 
-#Graph model predictions
-Na_labels = c('Control\n(0 ppm)', 'Low\n(50 ppm)', 'Low-medium\n(500 ppm)', 
-              'Medium\n(1,000 ppm)', 
-           'Medium-high\n(2,000 ppm)', 'High\n(4,000 ppm)')
+#Na Polynomials ####
+#With 2 terms
+summary(Na_PI_poly_red)
+Anova(Na_PI_poly_red)
 
-Na_NCV_pred <- ggpredict(Na_NCV_model, terms = 'fPPM [all]')
-Na_gg_plot <- ggplot(Na_NCV_pred, aes(x, predicted)) +
-  geom_point(data = Na_data, colour = 'skyblue', size = 4,
+
+summary(Na_PI_poly_red2)
+Anova(Na_PI_poly_red2)
+
+#Visualize Na_model ####
+Na_PI_pred <- ggpredict(Na_PI_model, terms = 'fPPM [all]')
+
+Na_labels = c('control\n(0)', 'low\n(50)', 'low-medium\n(500)', 
+              'medium\n(1,000)', 
+           'medium-high\n(2,000)', 'high\n(4,000)')
+
+Na_gg_plot <- ggplot(Na_PI_pred, aes(x, predicted)) +
+  geom_point(data = Na_data, colour = 'skyblue', size = 5,
              alpha = 0.5,
-             aes(y = NCV_mL, x = fPPM)) +
+             aes(y = new_PI, x = fPPM)) +
   geom_pointrange(aes(ymin = conf.low,
                       ymax = conf.high), colour = 'steelblue',
-                  size = 1) +
-  geom_hline(yintercept = mean(Na_NCV_pred$predicted), linetype = 'dashed') +
-  xlab('Concentration') +
+                  size = 1.2, linewidth = 2) +
+  geom_hline(yintercept = mean(Na_PI_pred$predicted), linetype = 'dashed') +
+  ylim(-0.2, 0.5) +
+  xlab('Concentration (ppm w/v)') +
   ylab('NCV (0 = mean of predicted values)') +
-theme_classic()
-
-Na_gg_plot + theme(axis.text = element_text(size = 12),
+theme_classic() + 
+  theme(axis.text = element_text(size = 10),
                    axis.title = element_text(size = 14)) +
-  scale_x_discrete(label = Na_labels) +
-  scale_y_continuous(limits = c(-0.1, 0.4))
+  scale_x_discrete(label = Na_labels)
 
-Na_NCV_poly_pred <- ggpredict(Na_NCV_poly_red, terms = 'PPM')
-Na_gg_poly_plot <- ggplot(Na_NCV_poly_pred,
+Na_gg_plot
+
+ggsave("Na_PI_plot_LL.png", plot = Na_gg_plot, width = 6, height = 4, units = "in", dpi = 300)
+
+#Cohort level
+Na_data <- Na_data %>%
+  mutate(cohort_ID = interaction(colony, date, drop = TRUE),
+         fPPM = factor(fPPM,
+                       levels = c(0, 50, 500, 1000, 2000, 
+                                  4000)))
+
+Na_gg_plot_cohort <- ggplot() +
+  geom_line(data = Na_data, aes(
+    x = fPPM, y = new_PI, group = cohort_ID),
+    colour = 'grey70', alpha = 0.6, linewidth = 0.6) +
+  geom_point(
+    data = Na_data,
+    aes(x = fPPM, y = new_PI),
+    colour = "skyblue",
+    size = 5, alpha = 0.5) +
+  geom_pointrange(
+    data = Na_PI_pred,
+    aes(x = x, y = predicted,
+        ymin = conf.low,
+        ymax = conf.high),
+    colour = "steelblue",
+    linewidth = 2, size = 1.2) +
+  geom_hline(
+    yintercept = mean(Na_PI_pred$predicted),
+    linetype = "dashed") +
+  xlab("Concentration (ppm w/v)") +
+  ylab("NCV (0 = mean of predicted values)") +
+  ylim(-0.2, 0.5) +
+  scale_x_discrete(labels = Na_labels) +
+  theme_classic() +
+  theme(
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 14))
+
+Na_gg_plot_cohort
+
+ggsave("Na_PI_plot_LL_cohort.png", plot = Na_gg_plot_cohort, width = 6, height = 4, units = "in", dpi = 300)
+
+Na_PI_poly_pred <- ggpredict(Na_PI_poly_red, terms = 'PPM[all]')
+Na_gg_poly_plot <- ggplot(Na_PI_poly_pred,
                          aes(x, predicted)) +
-  geom_point(data = Na_data, colour = 'skyblue', size = 4,
+  geom_point(data = Na_data, colour = 'skyblue', size = 5,
              alpha = 0.5,
-             aes(y = NCV_mL, x = PPM)) +
-  geom_pointrange(aes(xmin = conf.low,
-                      xmax = conf.high), colour = 'steelblue',
-                  size = 1) +
+             aes(y = new_PI, x = PPM)) +
+  geom_pointrange(aes(ymin = conf.low,
+                      ymax = conf.high), colour = 'steelblue',
+                  size = 1.2, linewidth = 2) +
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
               fill = 'skyblue', alpha = 0.25,
               linetype = 0) +
-  geom_line(colour = 'steelblue') +
-  geom_hline(yintercept = mean(Na_NCV_pred$predicted), linetype = 'dashed') +
+#  geom_line(colour = 'steelblue', linewidth = 0.8) +
+  geom_smooth(method = 
+                "loess", se = TRUE, colour = 'steelblue') +
+  geom_hline(yintercept = mean(Na_PI_poly_pred$predicted), linetype = 'dashed') +
   theme_classic() +
   xlab('Concentration (ppm w/v)') +
   ylab('NCV (0 = mean of predicted values)') +
-  ylim(-0.1, 0.4) +
-  guides(fill = FALSE)
+  ylim(-0.2, 0.5) +
+  guides(fill = FALSE) + theme(axis.text = element_text(size = 10),
+                       axis.title = element_text(size = 14)) 
 
-Na_gg_poly_plot + theme(axis.text = element_text(size = 12),
-                       axis.title = element_text(size = 14))
+Na_gg_poly_plot
 
+ggsave("Na_PI_poly_LL.png", plot = Na_gg_poly_plot, width = 5, height = 5, units = "in", dpi = 300)
+                     
 #Potassium (K)####
-#Using LMM with PPM as a categorical factor explanatory variable predicting normalised consumption value (NCV)
-#and date and colony as random effects.
-K_NCV_model <- glmmTMB(NCV_mL ~ fPPM + 
-                         (1 | date) +
-                         (1 | colony),
-                        family = gaussian, 
-                       data = K_data)
-
-#Using LMM with PPM as a continuous explanatory variable fit with a quadratic term to predict NCV with date and colony
-#With three terms
-K_NCV_poly <- glmmTMB(NCV_mL ~ poly(PPM, 3) +
-                      (1 | date) +
+#Plot PI (mL) by concentration (dashed line = 0)
+#Run model on K data####
+K_PI_model <- glmmTMB(new_PI ~ fPPM + 
+                        (1 | date) +
                         (1 | colony),
                       family = gaussian, 
                       data = K_data)
 
-#With two terms
-K_NCV_poly_red <- glmmTMB(NCV_mL ~ poly(PPM, 2) +
-                            (1 | date) +
-                            (1 | colony),
-                          family = gaussian, 
-                          data = K_data)
+#Polynomial models to fit a curve
+K_PI_poly_red <- glmmTMB(new_PI ~ poly(PPM,2) + 
+                           (1 | date) +
+                           (1 | colony),
+                    family = gaussian, 
+                     data = K_data)
 
-#With one term
-K_NCV_poly_red2 <- glmmTMB(NCV_mL ~ poly(PPM, 1) +
+K_PI_poly_red2 <- glmmTMB(new_PI ~ poly(PPM,1) + 
                             (1 | date) +
                             (1 | colony),
-                          family = gaussian, 
-                          data = K_data)
+                         family = gaussian, 
+                         data = K_data)
+
+AIC(K_PI_poly_red, K_PI_poly_red2)
+
+#df       AIC
+#K_PI_poly_red   6 -179.7788
+#K_PI_poly_red2  5 -181.6637
 
 #Check model assumptions
-check_model(K_NCV_model) 
-check_model(K_NCV_poly) 
-check_model(K_NCV_poly_red) 
-check_model(K_NCV_poly_red2) 
+check_model(K_PI_model) #OK
+check_model(K_PI_poly_red) #OK
+check_model(K_PI_poly_red2) #OK
 
 #Dharma tests
-sim_Output <- simulateResiduals(K_NCV_model, n = 250) 
-sim_Output <- simulateResiduals(K_NCV_poly, n = 250) 
-sim_Output <- simulateResiduals(K_NCV_poly_red, n = 250) 
-sim_Output <- simulateResiduals(K_NCV_poly_red2, n = 250) 
-
-#check model fit
-AIC(K_NCV_poly, K_NCV_poly_red, K_NCV_poly_red2)
+sim_Output <- simulateResiduals(K_PI_model, n = 250) #OK
+sim_Output <- simulateResiduals(K_PI_poly_red, n = 250) #OK
+sim_Output <- simulateResiduals(K_PI_poly_red2, n = 250) #OK
 
 plot(sim_Output)
 testResiduals(sim_Output)
 
-summary(K_NCV_model)
-Anova(K_NCV_model)
+#K_PI_model ####
+summary(K_PI_model)
+Anova(K_PI_model)
 
-summary(K_NCV_poly_red2)
-Anova(K_NCV_poly_red2)
+K_contrasts <- emmeans(K_PI_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
+K_contrasts
 
-#Examine contrasts
-K_contrasts <- emmeans(K_NCV_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
-K_contrasts    
+#Polynomials ####
+#With 2 terms
+summary(K_PI_poly_red)
 
-#Graph model predictions
-K_labels = c('Control\n(0 ppm)', 'Low\n(10 ppm)', 'Low-medium\n(100 ppm)', 
-              'Medium\n(1,000 ppm)', 
-              'Medium-high\n(4,500 ppm)', 'High\n(10,000 ppm)')
+#With 1 term
+summary(K_PI_poly_red2)
 
-K_NCV_pred <- ggpredict(K_NCV_model, terms = 'fPPM [all]')
-K_gg_plot <- ggplot(K_NCV_pred, aes(x, predicted)) +
-  geom_point(data = K_data, colour = 'tomato', size = 4,
+#Visualise K_model ####
+K_labels = c('control\n(0)', 'low\n(10)', 'low-medium\n(100)', 
+              'medium\n(1,000)', 
+              'medium-high\n(4,500)', 'high\n(10,000)')
+
+K_PI_pred <- ggpredict(K_PI_model, terms = 'fPPM [all]')
+
+K_gg_plot <- ggplot(K_PI_pred, aes(x, predicted)) +
+  geom_point(data = K_data, colour = 'tomato', size = 5,
              alpha = 0.5,
-             aes(y = NCV_mL, x = fPPM)) +
+             aes(y = new_PI, x = fPPM)) +
   geom_pointrange(aes(ymin = conf.low,
                       ymax = conf.high), colour = 'tomato4',
-                  size = 1) +
-  geom_hline(yintercept = mean(K_NCV_pred$predicted), linetype = 'dashed') +
-  xlab('Concentration') +
+                  size = 1.2, linewidth = 2) +
+  geom_hline(yintercept = mean(K_PI_pred$predicted), linetype = 'dashed') +
+#  stat_summary(fun = mean, geom = 'bar') +
+  stat_summary(fun.data = mean_se, geom = 'errorbar', 
+               width = 0.2, colour = 'tomato4') +
+  xlab('Concentration (ppm w/v)') +
   ylab('NCV (0 = mean of predicted values)') +
-theme_classic()
-
-K_gg_plot + theme(axis.text = element_text(size = 12),
+  ylim(-0.2, 0.5) +
+  theme_classic() + theme(axis.text = element_text(size = 10),
                    axis.title = element_text(size = 14)) +
-  scale_x_discrete(label = K_labels) +
-  scale_y_continuous(limits = c(-0.1, 0.4))
+  scale_x_discrete(label = K_labels)
 
-K_NCV_poly_pred <- ggpredict(K_NCV_poly_red2, terms = 'PPM')
-K_gg_poly_plot <- ggplot(K_NCV_poly_pred,
-                         aes(x, predicted)) +
-  geom_point(data = K_data, colour = 'tomato', size = 4,
+K_gg_plot
+
+ggsave("K_PI_plot_LL.png", plot = K_gg_plot, width = 6, height = 4, units = "in", dpi = 300)
+
+#Cohort level
+K_data <- K_data %>%
+  mutate(cohort_ID = interaction(colony, date, drop = TRUE),
+         fPPM = factor(fPPM,
+                       levels = c(0, 10, 100, 1000, 4500, 
+                                  10000)))
+
+K_gg_plot_cohort <- ggplot() +
+  geom_line(data = K_data, aes(
+    x = fPPM, y = new_PI, group = cohort_ID),
+    colour = 'grey70', alpha = 0.6, linewidth = 0.6) +
+  geom_point(
+    data = K_data,
+    aes(x = fPPM, y = new_PI),
+    colour = "tomato",
+    size = 5, alpha = 0.5) +
+  geom_pointrange(
+    data = K_PI_pred,
+    aes(x = x, y = predicted,
+        ymin = conf.low,
+        ymax = conf.high),
+    colour = "tomato4",
+    linewidth = 2, size = 1.2) +
+  geom_hline(
+    yintercept = mean(K_PI_pred$predicted),
+    linetype = "dashed") +
+  xlab("Concentration (ppm w/v)") +
+  ylab("NCV (0 = mean of predicted values)") +
+  ylim(-0.2, 0.5) +
+  scale_x_discrete(labels = K_labels) +
+  theme_classic() +
+  theme(
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 14))
+
+K_gg_plot_cohort
+ggsave("K_PI_plot_LL_cohort.png", plot = K_gg_plot_cohort, width = 6, height = 4, units = "in", dpi = 300)
+
+K_PI_poly_pred <- ggpredict(K_PI_poly_red2, terms = 'PPM[all]')
+K_gg_poly_plot <- ggplot(K_PI_poly_pred,
+                          aes(x, predicted)) +
+  geom_point(data = K_data, colour = 'tomato', size = 5,
              alpha = 0.5,
-             aes(y = NCV_mL, x = PPM)) +
-  geom_pointrange(aes(xmin = conf.low,
-                      xmax = conf.high), colour = 'tomato4',
-                  size = 1) +
+             aes(y = new_PI, x = PPM)) +
+  geom_pointrange(aes(ymin = conf.low,
+                      ymax = conf.high), colour = 'tomato4',
+                  size = 1.2, linewidth = 2) +
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
               fill = 'tomato', alpha = 0.25,
               linetype = 0) +
-  geom_line(colour = 'tomato4') +
-  geom_hline(yintercept = mean(K_NCV_pred$predicted), linetype = 'dashed') +
+  geom_smooth(method = "loess", se = TRUE, colour = 'tomato4') +
+  geom_hline(yintercept = mean(K_PI_poly_pred$predicted), linetype = 'dashed') +
   theme_classic() +
-  xlab('Concentration (ppm w/v)') +
-  ylab('NCV (0 = mean of predicted values)') +
-  ylim(-0.1, 0.4) +
-  guides(fill = FALSE)
+  xlab('') +
+  ylab('') +
+  ylim(-0.2, 0.5) +
+  guides(fill = FALSE) + theme(axis.text = element_text(size = 18))
 
-K_gg_poly_plot + theme(axis.text = element_text(size = 12),
-                       axis.title = element_text(size = 14))
+K_gg_poly_plot 
 
-#Calcium (Ca)####
-#Using LMM with PPM as a categorical factor explanatory variable predicting normalised consumption value (NCV)
-#and date and colony as random effects.
-Ca_NCV_model <- glmmTMB(NCV_mL ~ fPPM + 
-                         (1 | date) +
-                         (1 | colony),
-                        family = gaussian, 
+ggsave("K_PI_poly_LL.png", plot = K_gg_poly_plot, width = 6, height = 4, units = "in", dpi = 300)
+
+#K Post hoc tests####
+#Coefficients table
+ggcoef_table(K_PI_model)
+ggcoef_table(K_PI_poly_red2)
+
+models <- list('PI model' = K_PI_model,
+               'PI poly model' = K_PI_poly_red2)
+ggcoef_compare(models)
+
+#Multiple pairwise comparisons
+post_K_PI <- lsmeans(K_PI_model, pairwise ~ fPPM)
+contrast(post_K_PI, alpha = 0.05, method = 'pairwise', adjust = 'Tukey')
+
+#Calcium (Ca) ####
+#Run model on Ca data####
+Ca_PI_model <- glmmTMB(new_PI ~ fPPM + 
+                         (1|date) + (1 | colony),
+                       family = gaussian,
                        data = Ca_data)
 
-#Using LMM with PPM as a continuous explanatory variable fit with a quadratic term to predict NCV with date and colony
-#With three terms
-Ca_NCV_poly <- glmmTMB(NCV_mL ~ poly(PPM, 3) +
-                      (1 | date) +
-                        (1 | colony),
-                      family = gaussian, 
+Ca_PI_poly_red <- glmmTMB(new_PI ~ poly(PPM,2) + 
+                        (1|date) + (1 | colony),
+                        family = gaussian, 
                       data = Ca_data)
 
-#With two terms
-Ca_NCV_poly_red <- glmmTMB(NCV_mL ~ poly(PPM, 2) +
-                            (1 | date) +
-                            (1 | colony),
-                          family = gaussian, 
+Ca_PI_poly_red2 <- glmmTMB(new_PI ~ poly(PPM,1) +
+                            (1|date) + (1 | colony), 
+                           family = gaussian, 
                           data = Ca_data)
 
-#With one term
-Ca_NCV_poly_red2 <- glmmTMB(NCV_mL ~ poly(PPM, 1) +
-                            (1 | date) +
-                            (1 | colony),
-                          family = gaussian, 
-                          data = Ca_data)
+AIC(Ca_PI_poly_red, Ca_PI_poly_red2)
+#df       AIC
+#Ca_PI_poly_red   6 -187.3270
+#Ca_PI_poly_red2  5 -189.3147
 
 #Check model assumptions
-check_model(Ca_NCV_model) 
-check_model(Ca_NCV_poly) 
-check_model(Ca_NCV_poly_red) 
-check_model(Ca_NCV_poly_red2) 
+check_model(Ca_PI_model) #OK
+check_model(Ca_PI_poly_red) #OK
+check_model(Ca_PI_poly_red2) #OK
 
 #Dharma tests
-sim_Output <- simulateResiduals(Ca_NCV_model, n = 250) 
-sim_Output <- simulateResiduals(Ca_NCV_poly, n = 250) 
-sim_Output <- simulateResiduals(Ca_NCV_poly_red, n = 250) 
-sim_Output <- simulateResiduals(Ca_NCV_poly_red2, n = 250) 
+sim_Output <- simulateResiduals(Ca_PI_model, n = 250) #OK
+sim_Output <- simulateResiduals(Ca_PI_poly_red, n = 250) #OK
+sim_Output <- simulateResiduals(Ca_PI_poly_red2, n = 250) #OK
 
-#Check model fit
-AIC(Ca_NCV_poly, Ca_NCV_poly_red, Ca_NCV_poly_red2)
+plot(sim_Output) 
+testResiduals(sim_Output) 
 
-plot(sim_Output)
-testResiduals(sim_Output)
+#Ca_PI_model ####
+summary(Ca_PI_model)
+Anova(Ca_PI_model)
 
-summary(Ca_NCV_model)
-Anova(Ca_NCV_model)
+Ca_contrasts <- emmeans(Ca_PI_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
+Ca_contrasts
 
-summary(Ca_NCV_poly_red2)
-Anova(Ca_NCV_poly_red2)
+#Polynomials ####
+#with 2 terms
+summary(Ca_PI_poly_red)
+Anova(Ca_PI_poly_red)
 
-#Examine contrasts
-Ca_contrasts <- emmeans(Ca_NCV_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
-Ca_contrasts    
+#with 1 term
+summary(Ca_PI_poly_red2) #Significant fit for linear model
+Anova(Ca_PI_poly_red2)
 
-#Graph model predictions
-Ca_labels = c('Control\n(0 ppm)', 'Low\n(1 ppm)', 'Low-medium\n(10 ppm)', 
-             'Medium\n(50 ppm)', 
-             'Medium-high\n(225 ppm)', 'High\n(500 ppm)')
+#Visualise Ca_model####
+Ca_labels = c('control\n(0)', 'low\n(1)', 'low-medium\n(10)', 
+             'medium\n(50)', 
+             'medium-high\n(225)', 'high\n(500)')
 
-Ca_NCV_pred <- ggpredict(Ca_NCV_model, terms = 'fPPM [all]')
-Ca_gg_plot <- ggplot(Ca_NCV_pred, aes(x, predicted)) +
-  geom_point(data = Ca_data, colour = 'green4', size = 4,
+Ca_PI_pred <- ggpredict(Ca_PI_model, terms = 'fPPM [all]')
+
+Ca_gg_plot <- ggplot(Ca_PI_pred, aes(x, predicted)) +
+  geom_point(data = Ca_data, colour = 'green3', size = 5,
              alpha = 0.5,
-             aes(y = NCV_mL, x = fPPM)) +
+             aes(y = new_PI, x = fPPM)) +
+  geom_hline(yintercept = mean(Ca_PI_pred$predicted), linetype = 'dashed') +
   geom_pointrange(aes(ymin = conf.low,
                       ymax = conf.high), colour = 'darkgreen',
-                  size = 1) +
-  geom_hline(yintercept = mean(Ca_NCV_pred$predicted), linetype = 'dashed') +
-  xlab('Concentration') +
-  ylab('NCV (0 = mean of predicted values)') +
-theme_classic()
-
-Ca_gg_plot + theme(axis.text = element_text(size = 12),
-                   axis.title = element_text(size = 14)) +
-  scale_x_discrete(label = Ca_labels) +
-  scale_y_continuous(limits = c(-0.1, 0.4))
-
-Ca_NCV_poly_pred <- ggpredict(Ca_NCV_poly_red, terms = 'PPM')
-Ca_gg_poly_plot <- ggplot(Ca_NCV_poly_pred,
-                         aes(x, predicted)) +
-  geom_point(data = Ca_data, colour = 'green4', size = 4,
-             alpha = 0.5,
-             aes(y = NCV_mL, x = PPM)) +
-  geom_pointrange(aes(xmin = conf.low,
-                      xmax = conf.high), colour = 'darkgreen',
-                  size = 1) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
-              fill = 'green4', alpha = 0.25,
-              linetype = 0) +
-  geom_line(colour = 'darkgreen') +
-  geom_hline(yintercept = mean(Ca_NCV_pred$predicted), linetype = 'dashed') +
-  theme_classic() +
+                  size = 1.2, linewidth = 2) +
   xlab('Concentration (ppm w/v)') +
   ylab('NCV (0 = mean of predicted values)') +
-  ylim(-0.1, 0.4) +
-  guides(fill = FALSE)
+  ylim(-0.2, 0.5) +
+  theme_classic() + theme(axis.text = element_text(size = 10),
+                  axis.title = element_text(size = 14)) +
+  scale_x_discrete(label = Ca_labels)
 
-Ca_gg_poly_plot + theme(axis.text = element_text(size = 12),
-                       axis.title = element_text(size = 14))
+Ca_gg_plot 
 
-#Magnesium(Mg)####
-#Using LMM with PPM as a categorical factor explanatory variable predicting normalised consumption value (NCV)
-#and date and colony as random effects.
-Mg_NCV_model <- glmmTMB(NCV_mL ~ fPPM + 
-                         (1 | date) +
-                         (1 | colony),
-                        family = gaussian, 
+ggsave("Ca_PI_plot_LL.png", plot = Ca_gg_plot, width = 6, height = 4, units = "in", dpi = 300)
+
+Ca_PI_poly_pred <- ggpredict(Ca_PI_poly_red2, terms = 'PPM [all]')
+Ca_gg_poly_plot <- ggplot(Ca_PI_poly_pred,
+                         aes(x, predicted)) +
+  geom_point(data = Ca_data, colour = 'green3', size = 5,
+             alpha = 0.5,
+             aes(y = new_PI, x = PPM)) +
+  geom_pointrange(aes(ymin = conf.low,
+                      ymax = conf.high), colour = 'darkgreen',
+                  size = 1.2, linewidth = 2) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
+              fill = 'green3', alpha = 0.25,
+              linetype = 0) +
+  geom_smooth(method = "loess", se = TRUE, colour = 'darkgreen') +
+  geom_hline(yintercept = mean(Ca_PI_poly_pred$predicted), linetype = 'dashed') +
+  theme_classic() +
+  xlab('') +
+  ylab('') +
+  ylim(-0.2, 0.5) +
+  guides(fill = FALSE) + theme(axis.text = element_text(size = 18))
+
+Ca_gg_poly_plot 
+
+ggsave("Ca_PI_poly_LL.png", plot = Ca_gg_poly_plot, width = 6, height = 4, units = "in", dpi = 300)
+
+#Cohort level
+Ca_data <- Ca_data %>%
+  mutate(cohort_ID = interaction(colony, date, drop = TRUE),
+         fPPM = factor(fPPM,
+                       levels = c(0, 1, 10, 50, 225, 500)))
+
+Ca_gg_plot_cohort <- ggplot() +
+  geom_line(data = Ca_data, aes(
+    x = fPPM, y = new_PI, group = cohort_ID),
+    colour = 'grey70', alpha = 0.6, linewidth = 0.6) +
+  geom_point(
+    data = Ca_data,
+    aes(x = fPPM, y = new_PI),
+    colour = "green3",
+    size = 5, alpha = 0.5) +
+  geom_pointrange(
+    data = Ca_PI_pred,
+    aes(x = x, y = predicted,
+        ymin = conf.low,
+        ymax = conf.high),
+    colour = "darkgreen",
+    size  = 1.2, linewidth = 2) +
+  geom_hline(
+    yintercept = mean(Ca_PI_pred$predicted),
+    linetype = "dashed") +
+  xlab("Concentration (ppm w/v)") +
+  ylab("NCV (0 = mean of predicted values)") +
+    ylim(-0.2, 0.5) +
+  scale_x_discrete(labels = Ca_labels) +
+  theme_classic() +
+  theme(
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 14))
+
+Ca_gg_plot_cohort
+ggsave("Ca_PI_plot_LL_cohort.png", plot = Ca_gg_plot_cohort, width = 6, height = 4, units = "in", dpi = 300)
+
+#Ca post hoc tests ####
+#Coefficients table
+ggcoef_table(Ca_PI_model)
+ggcoef_table(Ca_PI_poly_red2)
+
+models <- list('PI model' = Ca_PI_model,
+               'PI poly model' = Ca_PI_poly_red2)
+ggcoef_compare(models)
+
+#Multiple pairwise comparisons
+post_Ca <- lsmeans(Ca_model, pairwise ~ concentration)
+contrast(post_Ca, alpha = 0.05, method = 'pairwise', adjust = 'Tukey')
+
+post_Ca_PI <- lsmeans(Ca_PI_model, pairwise ~ concentration)
+contrast(post_Ca_PI, alpha = 0.05, method = 'pairwise', adjust = 'Tukey')
+
+#Magnesium (Mg) ####
+#Run model on Mg data ####
+Mg_PI_model <- glmmTMB(new_PI ~ fPPM +
+                         (1|date) + (1 | colony),
+                       family = gaussian, 
                        data = Mg_data)
 
-#Using LMM with PPM as a continuous explanatory variable fit with a quadratic term to predict NCV with date and colony
-#With three terms
-Mg_NCV_poly <- glmmTMB(NCV_mL ~ poly(PPM, 3) +
-                      (1 | date) +
-                        (1 | colony),
-                      family = gaussian, 
+#Polynomials to fit a curve
+Mg_PI_poly_red <- glmmTMB(new_PI ~ poly(PPM, 2)
+                      +  (1|date) + (1 | colony),
+                      family = gaussian,
                       data = Mg_data)
 
-#With two terms
-Mg_NCV_poly_red <- glmmTMB(NCV_mL ~ poly(PPM, 2) +
-                            (1 | date) +
-                            (1 | colony),
+Mg_PI_poly_red2 <- glmmTMB(new_PI ~ poly(PPM,1) + 
+                          (1|date) + (1 | colony), 
                           family = gaussian, 
                           data = Mg_data)
 
-#With one term
-Mg_NCV_poly_red2 <- glmmTMB(NCV_mL ~ poly(PPM, 1) +
-                            (1 | date) +
-                            (1 | colony),
-                          family = gaussian, 
-                          data = Mg_data)
+AIC(Mg_PI_poly_red, Mg_PI_poly_red2)
+#df       AIC
+#Mg_PI_poly_red   6 -152.1251
+#Mg_PI_poly_red2  5 -153.7779
 
 #Check model assumptions
-check_model(Mg_NCV_model) 
-check_model(Mg_NCV_poly) 
-check_model(Mg_NCV_poly_red) 
-check_model(Mg_NCV_poly_red2) 
+check_model(Mg_PI_model) #OK
+check_model(Mg_PI_poly_red) #OK
+check_model(Mg_PI_poly_red2) #OK
 
 #Dharma tests
-sim_Output <- simulateResiduals(Mg_NCV_model, n = 250) 
-sim_Output <- simulateResiduals(Mg_NCV_poly, n = 250) 
-sim_Output <- simulateResiduals(Mg_NCV_poly_red, n = 250) 
-sim_Output <- simulateResiduals(Mg_NCV_poly_red2, n = 250) 
+sim_Output <- simulateResiduals(Mg_PI_model, n = 250) #Outlier test significant, p = 0.04184
+sim_Output <- simulateResiduals(Mg_PI_poly_red, n = 250) #Outlier test significant, p = 0.04184
+sim_Output <- simulateResiduals(Mg_PI_poly_red2, n = 250) #Outlier test significant, p = 0.04184
 
-#Check model fit
-AIC(Mg_NCV_poly, Mg_NCV_poly_red, Mg_NCV_poly_red2)
+plot(sim_Output) 
+testResiduals(sim_Output) 
 
-plot(sim_Output)
-testResiduals(sim_Output)
+#Mg_PI_model ####
+summary(Mg_PI_model)
+Anova(Mg_PI_model)
 
-summary(Mg_NCV_model)
-Anova(Mg_NCV_model)
+Mg_contrasts <- emmeans(Mg_PI_model, pairwise ~ fPPM, type = 'response',
+                        adjust = 'mvt')
+Mg_contrasts
 
-summary(Mg_NCV_poly_red2)
-Anova(Mg_NCV_poly_red2)
+#Mg Polynomials to fit curve ####
+summary(Mg_PI_poly_red)
+Anova(Mg_PI_poly_red)
 
-#Examine contrasts
-Mg_contrasts <- emmeans(Mg_NCV_model, pairwise ~ fPPM, type = 'response', adjust = 'mvt')
-Mg_contrasts    
+summary(Mg_PI_poly_red2)
+Anova(Mg_PI_poly_red2)
 
-#Graph model predictions
-Mg_labels = c('Control\n(0 ppm)', 'Low\n(5 ppm)', 'Low-medium\n(10 ppm)', 
-              'Medium\n(300 ppm)', 
-              'Medium-high\n(1,350 ppm)', 'High\n(3,000 ppm)')
+#Visualize Mg_model ####
+Mg_PI_pred <- ggpredict(Mg_PI_model, terms = 'fPPM[all]')
 
-Mg_NCV_pred <- ggpredict(Mg_NCV_model, terms = 'fPPM [all]')
-Mg_gg_plot <- ggplot(Mg_NCV_pred, aes(x, predicted)) +
-  geom_point(data = Mg_data, colour = 'orange', size = 4,
+Mg_gg_plot <- ggplot(Mg_PI_pred, aes(x, predicted)) +
+  geom_point(data = Mg_data, colour = 'orange', size = 5,
              alpha = 0.5,
-             aes(y = NCV_mL, x = fPPM)) +
+             aes(y = new_PI, x = fPPM)) +
   geom_pointrange(aes(ymin = conf.low,
                       ymax = conf.high), colour = 'darkorange3',
-                  size = 1) +
-  geom_hline(yintercept = mean(Mg_NCV_pred$predicted), linetype = 'dashed') +
-  xlab('Concentration') +
+                  size = 1.2, linewidth = 2) +
+  geom_hline(yintercept = mean(Mg_PI_pred$predicted), linetype = 'dashed') +
+  xlab('Concentration (ppm w/v)') +
   ylab('NCV (0 = mean of predicted values)') +
-theme_classic()
-
-Mg_gg_plot + theme(axis.text = element_text(size = 12),
+  ylim(-0.2, 0.5) +
+  theme_classic() + theme(axis.text = element_text(size = 10),
                    axis.title = element_text(size = 14)) +
-  scale_x_discrete(label = Mg_labels) +
-  scale_y_continuous(limits = c(-0.1, 0.4))
+  scale_x_discrete(label = Mg_labels)
+Mg_gg_plot
 
-Mg_NCV_poly_pred <- ggpredict(Mg_NCV_poly_red, terms = 'PPM')
-Mg_gg_poly_plot <- ggplot(Mg_NCV_poly_pred,
-                         aes(x, predicted)) +
-  geom_point(data = Mg_data, colour = 'orange', size = 4,
+ggsave("Mg_PI_plot_LL.png", plot = Mg_gg_plot, width = 6, height = 4, units = "in", dpi = 300)
+
+#Cohort level
+Mg_data <- Mg_data %>%
+  mutate(cohort_ID = interaction(colony, date, drop = TRUE),
+         fPPM = factor(fPPM,
+                       levels = c(0, 5, 10, 300, 1350, 3000)))
+
+Mg_gg_plot_cohort <- ggplot() +
+  geom_line(data = Mg_data, aes(
+    x = fPPM, y = new_PI, group = cohort_ID),
+    colour = 'grey70', alpha = 0.6, linewidth = 0.6) +
+  geom_point(
+    data = Mg_data,
+    aes(x = fPPM, y = new_PI),
+    colour = "orange",
+    size = 5, alpha = 0.5) +
+  geom_pointrange(
+    data = Mg_PI_pred,
+    aes(x = x, y = predicted,
+      ymin = conf.low,
+      ymax = conf.high),
+    colour = "darkorange3",
+    linewidth = 2, size = 1.2) +
+  geom_hline(
+    yintercept = mean(Mg_PI_pred$predicted),
+    linetype = "dashed") +
+  xlab("Concentration (ppm w/v)") +
+  ylab("NCV (0 = mean of predicted values)") +
+  ylim(-0.2, 0.5) +
+  scale_x_discrete(labels = Mg_labels) +
+  theme_classic() +
+  theme(
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 14))
+
+Mg_gg_plot_cohort
+ggsave("Mg_PI_plot_LL_cohort.png", plot = Mg_gg_plot_cohort, width = 6, height = 4, units = "in", dpi = 300)
+
+Mg_PI_poly_pred <- ggpredict(Mg_PI_poly_red2, terms = 'PPM [all]')
+Mg_gg_poly_plot <- ggplot(Mg_PI_poly_pred,
+                          aes(x, predicted)) +
+  geom_point(data = Mg_data, colour = 'orange', size = 5,
              alpha = 0.5,
-             aes(y = NCV_mL, x = PPM)) +
-  geom_pointrange(aes(xmin = conf.low,
-                      xmax = conf.high), colour = 'darkorange3',
-                  size = 1) +
+             aes(y = new_PI, x = PPM)) +
+  geom_pointrange(aes(ymin = conf.low,
+                      ymax = conf.high), colour = 'darkorange3', 
+                  size = 1.2, linewidth = 2) +
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
               fill = 'orange', alpha = 0.25,
               linetype = 0) +
-  geom_line(colour = 'darkorange3') +
-  geom_hline(yintercept = mean(Mg_NCV_pred$predicted), linetype = 'dashed') +
+  geom_smooth(method = "loess", se = TRUE, colour = 'darkorange3') +
+  geom_hline(yintercept = mean(Mg_PI_poly_pred$predicted), linetype = 'dashed') +
   theme_classic() +
-  xlab('Concentration (ppm w/v)') +
-  ylab('NCV (0 = mean of predicted values)') +
-  ylim(-0.1, 0.4) +
-  guides(fill = FALSE)
+  xlab('') +
+  ylab('') +
+ ylim(-0.2, 0.5) +
+  guides(fill = FALSE) + theme(axis.text = element_text(size = 18))
 
-Mg_gg_poly_plot + theme(axis.text = element_text(size = 12),
-                       axis.title = element_text(size = 14))
+Mg_gg_poly_plot 
+
+ggsave("Mg_PI_poly_LL.png", plot = Mg_gg_poly_plot, width = 6, height = 4, units = "in", dpi = 300)
+
+#Mg post hoc tests ####
+#Coefficients table
+ggcoef_table(Mg_PI_model)
+ggcoef_table(Mg_PI_poly_red2)
+
+models <- list('PI model' = Mg_PI_model,
+               'PI poly model' = Mg_PI_poly_red2)
+ggcoef_compare(models)
+
+#Multiple pairwise comparisons
+post_Mg_PI <- lsmeans(Mg_PI_model, pairwise ~ fPPM)
+contrast(post_Mg_PI, alpha = 0.05, method = 'pairwise', adjust = 'Tukey')
+
+#All plots
+ggarrange(Na_PI_plot, K_PI_plot, Ca_PI_plot, Mg_PI_plot, ncol=2, nrow=2, common.legend=T, legend="right", labels = c("Na","K","Ca","Mg"))
+
+ggarrange(Na_PI_poly_plot, K_PI_poly_plot, Ca_PI_poly_plot, Mg_PI_poly_plot, ncol=2, nrow=2, common.legend=T, legend="right", labels = c("Na","K","Ca","Mg"))
+
+ggarrange(Na_PI_plot, Na_PI_plot_out, ncol = 2, nrow = 1, common.legend = T, legend = 'right', labels = c('Na', 'Na without outliers'))
 
